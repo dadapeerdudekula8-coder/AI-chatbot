@@ -89,7 +89,7 @@ export async function POST(req: NextRequest) {
                   conversationId: conversation.id,
                   role: "ASSISTANT",
                   content: fullResponse || "I'm here to help! Let me know what you need assistance with.",
-                  sources: sources.length > 0 ? JSON.stringify(sources) : null,
+                  sources: sources.length > 0 ? JSON.parse(JSON.stringify(sources)) : undefined,
                 },
               });
               // Update conversation title if first exchange

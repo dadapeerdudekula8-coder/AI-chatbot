@@ -117,43 +117,31 @@ export async function processDocument(documentId: string): Promise<void> {
     }));
 
     // Store chunks with fallback
+   
+    // Store chunks with embeddings
     for (let i = 0; i < chunkData.length; i++) {
       const embedding = embeddings[i];
       const hasEmbedding = embedding && !embedding.every((v) => v === 0);
       const embeddingStr = hasEmbedding ? `[${embedding.join(",")}]` : null;
 
-      let stored = false;
-      if (hasEmbedding) {
-        try {
-          await prisma.$executeRaw`
-            INSERT INTO "KnowledgeChunk" (id, "documentId", content, embedding, "chunkIndex", metadata, "createdAt")
-            VALUES (
-              gen_random_uuid()::text,
-              ${chunkData[i].documentId},
-              ${chunkData[i].content},
-              ${embeddingStr}::vector,
-              ${chunkData[i].chunkIndex},
-              ${JSON.stringify(chunkData[i].metadata)}::jsonb,
-              NOW()
-            )
-          `;
-          stored = true;
-        } catch {
-          stored = false;
-        }
-      }
-
-      if (!stored) {
-        await prisma.knowledgeChunk.create({
+      await prisma.$transaction(async (tx) => {
+        const newChunk = await tx.knowledgeChunk.create({
           data: {
             documentId: chunkData[i].documentId,
             content: chunkData[i].content,
             chunkIndex: chunkData[i].chunkIndex,
-            embedding: embeddingStr,
-            metadata: JSON.stringify(chunkData[i].metadata),
+            metadata: chunkData[i].metadata,
           },
         });
-      }
+
+        if (hasEmbedding && embeddingStr) {
+          await tx.$executeRaw`
+            UPDATE "KnowledgeChunk"
+            SET "embedding" = ${embeddingStr}::vector
+            WHERE "id" = ${newChunk.id}
+          `;
+        }
+      });
     }
 
     await prisma.knowledgeDocument.update({
@@ -164,10 +152,12 @@ export async function processDocument(documentId: string): Promise<void> {
     console.log(`[Embeddings] Document ${documentId} processed successfully.`);
   } catch (error: any) {
     console.error(`[Embeddings] Failed to process document ${documentId}:`, error.message);
+
     await prisma.knowledgeDocument.update({
       where: { id: documentId },
       data: { status: "FAILED", errorMessage: error.message },
     });
+
     throw error;
   }
 }
